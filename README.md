@@ -12,12 +12,6 @@ Throughput, TTFT, and ITL are the three metrics that matter most for LLM inferen
 
 **Avg ITL (ms)** measures streaming smoothness. Once tokens start flowing, ITL determines whether the output feels like fluid text or stuttering chunks. For coding agents that parse streaming tool calls, high ITL adds latency to every tool-use round trip. ITL is dominated by decode-step scheduling and memory bandwidth, which are different bottlenecks from prefill (TTFT). Measuring both separately reveals whether an engine is bottlenecked on prefill, decode, or both.
 
-## Why This Visualization Works
-
-The 3-panel chart (Throughput, TTFT, ITL vs Concurrency) puts each metric on its own y-axis so the scales don't compete. Plotting both engines on the same panel with shared x-axis (concurrency) makes the comparison immediate: at any concurrency level, the vertical gap between lines shows the performance difference.
-
-Concurrency is the right x-axis because it's the variable that matters most for production serving. A single-request benchmark tells you nothing about how the engine behaves when 64 users hit it simultaneously. The concurrency sweep (1, 4, 16, 64) reveals scaling behavior: does throughput scale linearly? Does TTFT degrade gracefully or cliff? Does ITL stay stable under load?
-
 ## Metrics
 
 - **Throughput** (tokens/sec): Total tokens generated divided by wall-clock time at each concurrency level
