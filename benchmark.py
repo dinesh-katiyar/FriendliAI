@@ -4,8 +4,9 @@ from typing import Optional
 
 try:
     import aiohttp
+    import matplotlib.pyplot as plt
 except ImportError:
-    print("Install: pip install aiohttp")
+    print("Install: pip install aiohttp matplotlib")
     exit(1)
 
 @dataclass
@@ -101,13 +102,11 @@ async def run_concurrency_level(config, concurrency, num_requests):
         "concurrency": concurrency,
         "throughput_tps": total_tokens / total_time,
         "avg_ttft": statistics.mean(r.ttft for r in valid),
-        "p50_ttft": statistics.median(r.ttft for r in valid),
-        "p99_ttft": sorted(r.ttft for r in valid)[int(len(valid)*0.99)],
         "avg_itl": statistics.mean(statistics.mean(r.itl_values) for r in valid if r.itl_values),
         "success_rate": len(valid) / len(results),
     }
 
-async def benchmark_engine(config, concurrency_levels, requests_per_level):
+async def benchmark(config, concurrency_levels, requests_per_level):
     """Benchmark a single engine across all concurrency levels."""
     print(f"\n=== Benchmarking {config.name} ({config.base_url}) ===\n")
     results = []
@@ -116,10 +115,56 @@ async def benchmark_engine(config, concurrency_levels, requests_per_level):
         r = await run_concurrency_level(config, c, requests_per_level)
         if r:
             results.append(r)
-            print(f"throughput={r['throughput_tps']:.1f} tok/s, TTFT={r['avg_ttft']*1000:.0f}ms, TTFT p50={r['p50_ttft']*1000:.0f}ms, TTFT p99={r['p99_ttft']*1000:.0f}ms, ITL={r['avg_itl']*1000:.1f}ms")
+            print(f"throughput={r['throughput_tps']:.1f} tok/s, Avg TTFT={r['avg_ttft']*1000:.0f}ms, ITL={r['avg_itl']*1000:.1f}ms")
         else:
             print("FAILED")
     return results
+
+def generate_chart(friendli_results, vllm_results, output_path="benchmark_results.png"):
+    """Generate 3-panel chart: Throughput, TTFT, and ITL vs concurrency."""
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fc = [r["concurrency"] for r in friendli_results]
+    vc = [r["concurrency"] for r in vllm_results]
+
+    # Panel 1: Throughput
+    axes[0].plot(fc, [r["throughput_tps"] for r in friendli_results],
+                "o-", color="#2563EB", linewidth=2, markersize=7, label="Friendli Engine")
+    axes[0].plot(vc, [r["throughput_tps"] for r in vllm_results],
+                "s--", color="#DC2626", linewidth=2, markersize=7, label="vLLM")
+    axes[0].set_xlabel("Concurrent Requests")
+    axes[0].set_ylabel("Throughput (tokens/sec)")
+    axes[0].set_title("Throughput vs Concurrency")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    axes[0].set_xticks(fc)
+
+    # Panel 2: TTFT (avg)
+    axes[1].plot(fc, [r["avg_ttft"] * 1000 for r in friendli_results],
+                "o-", color="#2563EB", linewidth=2, markersize=7, label="Friendli Engine")
+    axes[1].plot(vc, [r["avg_ttft"] * 1000 for r in vllm_results],
+                "s--", color="#DC2626", linewidth=2, markersize=7, label="vLLM")
+    axes[1].set_xlabel("Concurrent Requests")
+    axes[1].set_ylabel("Avg TTFT (ms)")
+    axes[1].set_title("Time to First Token vs Concurrency")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    axes[1].set_xticks(fc)
+
+    # Panel 3: ITL (avg)
+    axes[2].plot(fc, [r["avg_itl"] * 1000 for r in friendli_results],
+                "o-", color="#2563EB", linewidth=2, markersize=7, label="Friendli Engine")
+    axes[2].plot(vc, [r["avg_itl"] * 1000 for r in vllm_results],
+                "s--", color="#DC2626", linewidth=2, markersize=7, label="vLLM")
+    axes[2].set_xlabel("Concurrent Requests")
+    axes[2].set_ylabel("Avg ITL (ms)")
+    axes[2].set_title("Inter-Token Latency vs Concurrency")
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
+    axes[2].set_xticks(fc)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    print(f"\nChart saved to {output_path}")
 
 async def main():
     parser = argparse.ArgumentParser(description="Benchmark Friendli vs vLLM")
@@ -132,9 +177,9 @@ async def main():
     parser.add_argument("--vllm-url", required=True,
                         help="vLLM base URL (e.g., http://vllm-server:8000/v1)")
     parser.add_argument("--vllm-model", required=True,
-                        help="vLLM model name (e.g., Qwen/Qwen3.5-9B)")
-    parser.add_argument("--requests", type=int, required=True,
-                        help="Requests per concurrency level")
+                        help="vLLM model name (e.g., meta-llama/Llama-3-8B-Instruct)")
+    parser.add_argument("--requests", type=int, default=32, help="Requests per concurrency level")
+    parser.add_argument("--output", default="benchmark_results.png", help="Output chart path")
     args = parser.parse_args()
 
     friendli_config = EngineConfig(
@@ -150,18 +195,24 @@ async def main():
     )
 
     concurrency_levels = [1, 4, 16, 64]
-    friendli = await benchmark_engine(friendli_config, concurrency_levels, args.requests)
-    vllm = await benchmark_engine(vllm_config, concurrency_levels, args.requests)
+    friendli = await benchmark(friendli_config, concurrency_levels, args.requests)
+    vllm = await benchmark(vllm_config, concurrency_levels, args.requests)
 
-    print("\n" + "="*70)
-    print(f"{'Concurrency':>12} {'Friendli tok/s':>16} {'vLLM tok/s':>14} {'Speedup':>10}")
-    print("-"*70)
+    header = (f"{'Conc':>6} | {'Friendli tok/s':>14} {'Avg TTFT':>10} {'Avg ITL':>9}"
+             f" | {'vLLM tok/s':>12} {'Avg TTFT':>10} {'Avg ITL':>9} | {'Speedup':>8}")
+    print("\n" + "="*len(header))
+    print(header)
+    print("-"*len(header))
     for f, v in zip(friendli, vllm):
         speedup = f["throughput_tps"] / v["throughput_tps"] if v["throughput_tps"] > 0 else 0
-        print(f"{f['concurrency']:>12d} {f['throughput_tps']:>16.1f} {v['throughput_tps']:>14.1f} {speedup:>9.2f}x")
+        print(f"{f['concurrency']:>6d} | {f['throughput_tps']:>14.1f} {f['avg_ttft']*1000:>9.0f}ms {f['avg_itl']*1000:>8.1f}ms"
+              f" | {v['throughput_tps']:>12.1f} {v['avg_ttft']*1000:>9.0f}ms {v['avg_itl']*1000:>8.1f}ms | {speedup:>7.2f}x")
+
+    generate_chart(friendli, vllm, args.output)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
