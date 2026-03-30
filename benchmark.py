@@ -81,7 +81,7 @@ async def send_streaming_request(session, config: EngineConfig, prompt):
                     result.total_tokens += 1
         result.total_time = time.perf_counter() - start
     except Exception as e:
-        result.error = str(e)
+        result.error = str(e) 
     return result
 
 async def run_concurrency_level(config, concurrency, num_requests):

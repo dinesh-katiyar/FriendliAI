@@ -115,6 +115,5 @@ Both engines are called via the OpenAI-compatible `/v1/chat/completions` endpoin
 
 ## Notes
 
-- FriendliAI results include network latency (requests go to `api.friendli.ai`). If vLLM runs locally, it has an inherent advantage from zero network round-trip. For a fair engine-to-engine comparison, run both remotely or account for network overhead.
 - The script cycles through 8 built-in prompts. All prompts are similar length to keep the comparison consistent.
 - Each request generates up to 256 tokens (`max_tokens=256`).
