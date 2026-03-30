@@ -58,12 +58,12 @@ python benchmark_engines.py \
 
 | Argument | Required | Default | Description |
 |---|---|---|---|
-| `--friendli-model` | Yes | - | Friendli endpoint ID (e.g., `depnrsi6t162u7r`) |
+| `--friendli-model` | Yes | - | Friendli endpoint ID  |
 | `--friendli-url` | No | `https://api.friendli.ai/dedicated/v1` | Friendli base URL |
 | `--friendli-token` | No | `FRIENDLI_TOKEN` env var | Friendli API token |
 | `--vllm-url` | Yes | - | vLLM base URL (e.g., `http://localhost:8000/v1`) |
 | `--vllm-model` | Yes | - | vLLM model name (e.g., `Qwen/Qwen3.5-9B`) |
-| `--requests` | No | `32` | Requests per concurrency level |
+| `--requests` | No | `64` | Requests per concurrency level |
 | `--output` | No | `benchmark_results.png` | Output chart path |
 
 ## Output

@@ -1,6 +1,7 @@
+"""CLI benchmark: Friendli vs vLLM streaming chat (throughput, TTFT, ITL)."""
 import asyncio, time, json, os, argparse, statistics
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 try:
     import aiohttp
@@ -11,6 +12,8 @@ except ImportError:
 
 @dataclass
 class RequestResult:
+    """Per-request metrics from one streaming completion (tokens as deltas)."""
+
     ttft: float = 0.0
     itl_values: list = field(default_factory=list)
     total_tokens: int = 0
@@ -19,7 +22,6 @@ class RequestResult:
 
 PROMPTS = [
     "Explain how KV caching works in transformer inference.",
-    "Write a Python function to implement binary search.",
     "What are the trade-offs between tensor and pipeline parallelism?",
     "Describe the ORCA scheduling algorithm for LLM inference.",
     "Compare continuous batching with static batching.",
@@ -30,21 +32,26 @@ PROMPTS = [
 
 @dataclass
 class EngineConfig:
-    """Configuration for an inference engine endpoint."""
+    """Target engine: display name, OpenAI-style base URL (/v1), model id, optional API key."""
+
     name: str
-    base_url: str        # e.g., "https://api.friendli.ai/dedicated/v1"
-    model: str           # e.g., "depnrsi6t162u7r" for Friendli, model name for vLLM
-    api_key: str = ""    # Bearer token (required for Friendli, optional for vLLM)
+    base_url: str
+    model: str
+    api_key: str = ""
 
     @property
     def headers(self) -> dict:
+        """JSON Content-Type and Bearer Authorization when ``api_key`` is non-empty."""
         h = {"Content-Type": "application/json"}
         if self.api_key:
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
 
-async def send_streaming_request(session, config: EngineConfig, prompt):
-    """Send a single streaming request and measure timing."""
+async def send_streaming_request(session, config: EngineConfig, prompt: str) -> RequestResult:
+    """POST ``{base_url}/chat/completions`` with ``stream=True`` and record timings.
+
+    Parses SSE ``data:`` lines; counts content deltas as tokens. On failure, sets ``result.error``.
+    """
     result = RequestResult()
     payload = {
         "model": config.model,
@@ -84,8 +91,13 @@ async def send_streaming_request(session, config: EngineConfig, prompt):
         result.error = str(e) 
     return result
 
-async def run_concurrency_level(config, concurrency, num_requests):
-    """Run num_requests at given concurrency, return aggregated results."""
+async def run_concurrency_level(
+    config: EngineConfig, concurrency: int, num_requests: int
+) -> Optional[dict[str, Any]]:
+    """Run ``num_requests`` streaming calls capped at ``concurrency`` in flight.
+
+    Returns a metrics dict (throughput, avg TTFT/ITL, success rate) or ``None`` if all failed.
+    """
     semaphore = asyncio.Semaphore(concurrency)
     async with aiohttp.ClientSession() as session:
         async def limited_request(prompt):
@@ -106,8 +118,13 @@ async def run_concurrency_level(config, concurrency, num_requests):
         "success_rate": len(valid) / len(results),
     }
 
-async def benchmark(config, concurrency_levels, requests_per_level):
-    """Benchmark a single engine across all concurrency levels."""
+async def benchmark(
+    config: EngineConfig, concurrency_levels: list[int], requests_per_level: int
+) -> list[dict[str, Any]]:
+    """For each concurrency in ``concurrency_levels``, run ``requests_per_level`` requests.
+
+    Prints a line per level. Returns only successful levels (skipped levels omit from list).
+    """
     print(f"\n=== Benchmarking {config.name} ({config.base_url}) ===\n")
     results = []
     for c in concurrency_levels:
@@ -120,8 +137,15 @@ async def benchmark(config, concurrency_levels, requests_per_level):
             print("FAILED")
     return results
 
-def generate_chart(friendli_results, vllm_results, output_path="benchmark_results.png"):
-    """Generate 3-panel chart: Throughput, TTFT, and ITL vs concurrency."""
+def generate_chart(
+    friendli_results: list[dict[str, Any]],
+    vllm_results: list[dict[str, Any]],
+    output_path: str = "benchmark_results.png",
+) -> None:
+    """Plot Friendli vs vLLM: throughput, average TTFT (ms), average ITL (ms) vs concurrency.
+
+    Writes a PNG to ``output_path`` (dpi 150).
+    """
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     fc = [r["concurrency"] for r in friendli_results]
     vc = [r["concurrency"] for r in vllm_results]
@@ -166,19 +190,20 @@ def generate_chart(friendli_results, vllm_results, output_path="benchmark_result
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"\nChart saved to {output_path}")
 
-async def main():
+async def main() -> None:
+    """Entry point: parse arguments, run both benchmarks, print summary, save chart."""
     parser = argparse.ArgumentParser(description="Benchmark Friendli vs vLLM")
     parser.add_argument("--friendli-url", default="https://api.friendli.ai/dedicated/v1",
                         help="Friendli dedicated endpoint base URL (default: https://api.friendli.ai/dedicated/v1)")
     parser.add_argument("--friendli-model", required=True,
-                        help="Friendli endpoint ID (e.g., depnrsi6t162u7r)")
+                        help="Friendli endpoint ID")
     parser.add_argument("--friendli-token", default=os.getenv("FRIENDLI_TOKEN", ""),
                         help="Friendli API token (or set FRIENDLI_TOKEN env var)")
     parser.add_argument("--vllm-url", required=True,
                         help="vLLM base URL (e.g., http://vllm-server:8000/v1)")
     parser.add_argument("--vllm-model", required=True,
-                        help="vLLM model name (e.g., meta-llama/Llama-3-8B-Instruct)")
-    parser.add_argument("--requests", type=int, default=32, help="Requests per concurrency level")
+                        help="vLLM model name (e.g., Qwen/Qwen3.5-9B)")
+    parser.add_argument("--requests", type=int, default=64, help="Requests per concurrency level")
     parser.add_argument("--output", default="benchmark_results.png", help="Output chart path")
     args = parser.parse_args()
 
