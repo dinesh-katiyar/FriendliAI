@@ -48,7 +48,7 @@ python -m vllm.entrypoints.openai.api_server \
 
 ```bash
 python benchmark_engines.py \
-  --friendli-model depnrsi6t162u7r \
+  --friendli-model friendly_endpoint_ID\
   --vllm-url http://localhost:8000/v1 \
   --vllm-model Qwen/Qwen3.5-9B \
   --requests 64
